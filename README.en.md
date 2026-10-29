@@ -61,10 +61,20 @@ the GUI audit session, and that command fails with
 
 ## 3. Installation
 
-Copy `gui-run` to `~/bin/` on the target macOS host and make it executable:
+Two implementations are provided. They behave identically; pick either one:
+
+| Implementation | File | Requires | Use when |
+|-|-|-|-|
+| zsh | `gui-run` | Only the system `/bin/zsh` | The host has no Python |
+| Python | `gui-run.py` | Python 3.9+ (macOS ships `/usr/bin/python3`) | You want sturdier argument and plist handling |
+
+Copy the chosen file to `~/bin/` on the target macOS host and make it executable:
 
 ```bash
 install -m 755 gui-run ~/bin/gui-run
+
+# or
+install -m 755 gui-run.py ~/bin/gui-run.py
 ```
 
 `~/bin` is usually not in the `PATH` of a non-interactive SSH session, so invoke the tool by
@@ -104,10 +114,20 @@ string with `;` or `&&`.
 | Timeout | Defaults to 300 seconds, overridable with `GUIRUN_TIMEOUT=<seconds>`; returns 124 on timeout |
 | No argument | Prints usage and returns 64 |
 | Submission failure | Returns 71 with the reason when `launchctl bootstrap` fails |
+| Working directory creation failure | Returns 70 |
 | Environment variables | **Not inherited** from the SSH session; every run starts from a clean login environment. Export what you need inside the command |
 | Working directory | The directory the tool was invoked from |
 | SSH disconnect | The job already runs under `launchd`, so a dropped SSH connection does not stop it |
 | Concurrency | Each invocation uses its own temporary directory and job label, so calls can run concurrently |
+
+The two implementations differ only internally; observable behaviour is the same:
+
+| Item | zsh version | Python version |
+|-|-|-|
+| plist generation | String concatenation | `plistlib`, so paths containing `&`, `<` and similar are escaped correctly |
+| Timeout validation | Invalid values flow into the arithmetic | Non-numeric or non-positive values are rejected with 64 |
+| Help output | Usage shown only when no argument is given | Supports `-h` / `--help` |
+| Output passthrough | `cat` of the log file | Written as bytes, leaving line endings untouched |
 
 ## 6. Verifying it works
 
@@ -138,6 +158,8 @@ To check whether a window was opened, do not use
   automatically and appends common toolchain paths (`~/bin`, `~/development/flutter/bin`,
   `~/.local/bin`). Other toolchains need an explicit `export PATH=...` inside the command.
 - macOS has no `timeout` command by default; use `GUIRUN_TIMEOUT` to bound a run.
+- The Python version validates the timeout: a non-numeric or non-positive `GUIRUN_TIMEOUT`
+  is reported and returns 64 rather than being silently ignored.
 
 ## 8. When to use it
 

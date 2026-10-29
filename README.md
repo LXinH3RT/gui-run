@@ -49,10 +49,20 @@ osascript -e 'tell application "Terminal" to do script "/tmp/build.sh"'
 
 ## 3. 安装
 
-把 `gui-run` 复制到目标 macOS 主机的 `~/bin/` 并赋予执行权限：
+提供两个实现，行为一致，任选其一：
+
+| 实现 | 文件 | 依赖 | 适用 |
+|-|-|-|-|
+| zsh | `gui-run` | 仅系统自带 `/bin/zsh` | 无 Python 环境的主机 |
+| Python | `gui-run.py` | Python 3.9+（macOS 自带 `/usr/bin/python3`） | 需要更稳健的参数与 plist 处理 |
+
+把选中的文件复制到目标 macOS 主机的 `~/bin/` 并赋予执行权限：
 
 ```bash
 install -m 755 gui-run ~/bin/gui-run
+
+# 或
+install -m 755 gui-run.py ~/bin/gui-run.py
 ```
 
 `~/bin` 通常不在非交互 SSH 会话的 `PATH` 中，调用时使用完整路径 `~/bin/gui-run`。
@@ -90,10 +100,20 @@ GUIRUN_TIMEOUT=1200 ~/bin/gui-run "flutter build ios --release"
 | 超时 | 默认 300 秒，`GUIRUN_TIMEOUT=<秒>` 覆盖，超时返回 124 |
 | 无参数 | 打印用法，返回 64 |
 | 提交失败 | `launchctl bootstrap` 失败时返回 71 并输出原因 |
+| 临时目录创建失败 | 返回 70 |
 | 环境变量 | **不继承** SSH 会话中的环境变量，每次都是干净的 login 环境；需要的变量在命令内 `export` |
 | 工作目录 | 沿用调用时所在的目录 |
 | SSH 断开 | 作业已在 `launchd` 中运行，SSH 断开不影响其继续执行 |
 | 并发 | 每次调用使用独立的临时目录与作业标签，可并发 |
+
+两个实现的差异仅在于内部处理方式，对外行为相同：
+
+| 项目 | zsh 版 | Python 版 |
+|-|-|-|
+| plist 生成 | 字符串拼接 | `plistlib`，路径含 `&`、`<` 等字符也能正确转义 |
+| 超时参数校验 | 非法值会参与算术运算 | 非数字或非正数时报错并返回 64 |
+| 帮助输出 | 仅无参数时提示用法 | 支持 `-h` / `--help` |
+| 输出透传 | `cat` 日志文件 | 按字节写出，不改变换行 |
 
 ## 6. 验证方法
 
@@ -120,6 +140,7 @@ codesign -dvv b.txt          # -> Signature size=... / Authority=...
 - `launchd` 作业不读 `~/.zprofile`，`gui-run` 已自动探测 Homebrew 并追加常用工具链路径
   （`~/bin`、`~/development/flutter/bin`、`~/.local/bin`）；其他工具链需在命令内显式 `export PATH=...`。
 - macOS 默认没有 `timeout` 命令，需要限时用 `GUIRUN_TIMEOUT`。
+- Python 版对超时值做了校验：`GUIRUN_TIMEOUT` 非数字或非正数时报错返回 64，不会静默忽略。
 
 ## 8. 适用场景
 
@@ -132,4 +153,5 @@ codesign -dvv b.txt          # -> Signature size=... / Authority=...
 ## 9. 许可证
 
 [MIT](LICENSE)。
+
 
