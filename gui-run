@@ -1,0 +1,97 @@
+#!/bin/zsh
+# gui-run —— 在 macOS 的 GUI（Aqua）会话里执行命令，且不打开任何终端窗口。
+#
+# 用途：SSH 非交互会话拿不到 login keychain（codesign 会报
+# errSecInternalComponent），历史上用
+#   osascript -e 'tell application "Terminal" to do script "..."'
+# 绕到 GUI 会话，代价是每调用一次就新建一个 Terminal 窗口/标签页。
+# 本脚本改用 launchctl bootstrap gui/<uid> 把命令投进 GUI 域执行，
+# 效果相同但完全不碰 Terminal。
+#
+# 用法：gui-run <命令字符串>
+#   gui-run 'codesign --force --sign XXX app.framework'
+# 退出码：命令自身的退出码；超时返回 124。
+
+emulate -L zsh
+set -u
+
+if (( $# == 0 )); then
+  print -u2 'usage: gui-run <command ...>'
+  exit 64
+fi
+
+CMD="$*"
+WORK="$(mktemp -d "${TMPDIR:-/tmp}/guirun.XXXXXX")" || exit 70
+LABEL="local.guirun.$$.$RANDOM"
+RUN="$WORK/run.sh"
+LOG="$WORK/out.log"
+DONE="$WORK/done"
+PLIST="$WORK/job.plist"
+RC_FILE="$WORK/rc"
+STARTDIR="$PWD"
+
+# 组装实际执行的脚本：先恢复 login shell 环境（PATH 等），再跑子 shell 里的命令，
+# 这样命令里的 exit 只结束子 shell，不会跳过后面的收尾。
+{
+  print -r -- '#!/bin/zsh'
+  # launchd 不读 ~/.zprofile，Homebrew 需要手动加载（兼容 Apple Silicon 与 Intel）
+  print -r -- 'for _brew in /opt/homebrew/bin/brew /usr/local/bin/brew; do'
+  print -r -- '  [[ -x $_brew ]] && eval "$($_brew shellenv)" && break'
+  print -r -- 'done'
+  # 常见工具链路径，不存在的目录由 shell 忽略，不影响后续解析
+  print -r -- 'export PATH="$HOME/bin:$HOME/development/flutter/bin:$HOME/.local/bin:$PATH"'
+  print -r -- "cd ${(q)STARTDIR} 2>/dev/null"
+  print -r -- "("
+  print -r -- "$CMD"
+  print -r -- ") 2>&1"
+  print -r -- 'print -r -- "$?" > "$1"'
+  print -r -- 'print -r -- done > "$2"'
+} > "$RUN"
+chmod +x "$RUN"
+
+cat > "$PLIST" <<PLISTEOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>Label</key><string>$LABEL</string>
+<key>ProgramArguments</key><array>
+<string>/bin/zsh</string>
+<string>$RUN</string>
+<string>$RC_FILE</string>
+<string>$DONE</string>
+</array>
+<key>RunAtLoad</key><true/>
+<key>StandardOutPath</key><string>$LOG</string>
+<key>StandardErrorPath</key><string>$LOG</string>
+</dict></plist>
+PLISTEOF
+
+if ! launchctl bootstrap "gui/$(id -u)" "$PLIST" 2>"$WORK/boot.err"; then
+  print -u2 "gui-run: bootstrap 失败: $(cat "$WORK/boot.err" 2>/dev/null)"
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+  rm -rf "$WORK"
+  exit 71
+fi
+
+# 轮询等待完成：默认 300 秒，可由 GUIRUN_TIMEOUT 覆盖（单位秒）。
+TIMEOUT="${GUIRUN_TIMEOUT:-300}"
+TICKS=$(( TIMEOUT * 10 ))
+for (( i = 0; i < TICKS; i++ )); do
+  [[ -f "$DONE" ]] && break
+  sleep 0.1
+done
+
+launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null
+
+[[ -f "$LOG" ]] && cat "$LOG"
+
+if [[ ! -f "$DONE" ]]; then
+  print -u2 "gui-run: 超过 ${TIMEOUT}s 仍未结束（命令可能仍在后台运行，或卡在 GUI 授权弹窗）"
+  rm -rf "$WORK"
+  exit 124
+fi
+
+RC=0
+[[ -f "$RC_FILE" ]] && RC="$(<"$RC_FILE")"
+rm -rf "$WORK"
+exit "${RC:-0}"
