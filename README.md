@@ -1,5 +1,7 @@
 # gui-run — 在 macOS GUI 会话中执行命令且不弹终端窗口
 
+**Language:** 中文 | [English](README.en.md)
+
 本仓库收录一个小工具与其说明，用于解决「通过 SSH 在 macOS 上执行需要 GUI 会话权限的命令时，
 每次都弹出新的终端窗口」这一问题。
 
