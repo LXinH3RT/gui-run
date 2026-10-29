@@ -126,3 +126,8 @@ codesign -dvv b.txt          # -> Signature size=... / Authority=...
 - 任何需要 GUI 会话权限但不希望弹出终端窗口的自动化流程。
 
 不适用于：需要读取终端标准输入进行交互的命令（`gui-run` 不支持交互式输入）。
+
+## 9. 许可证
+
+[MIT](LICENSE)。
+
